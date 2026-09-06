@@ -319,15 +319,17 @@ export async function onDeactivate() {
 
 export async function uploadProgramToHub(
     data: Uint8Array,
+    sourceFileName: string,
     slotId: number,
     isCompiledIn: boolean,
     progress?: vscode.Progress<{ increment: number }>,
 ) {
     await uploadFileToHub(
         data,
-        `program.${isCompiledIn ? "mpy" : "py"}`,
+        isCompiledIn ? "program.mpy" : "program.py",
         slotId,
         progress,
+        sourceFileName,
     );
 }
 
@@ -340,9 +342,11 @@ export async function uploadFileToHub(
     fileName: string,
     slotId: number,
     progress?: vscode.Progress<{ increment: number }>,
+    displayFileName = fileName,
 ) {
     const uploadSize = data.length;
 
+    logger.info(`Uploading file ${displayFileName} to slot ${slotId}...`);
     await client!.startFileUpload(fileName, slotId, crc32WithAlignment(data));
 
     const blockSize: number = client!.maxChunkSize!;
@@ -357,6 +361,7 @@ export async function uploadFileToHub(
 
         progress?.report({ increment });
     }
+    logger.info("done.\r\n");
 }
 
 export async function startProgramInSlot(slotId: number, showProgress = true) {
@@ -364,6 +369,7 @@ export async function startProgramInSlot(slotId: number, showProgress = true) {
         return;
     }
 
+    logger.info(`Starting program ${slotId}\r\n`);
     const startProgram = () => client!.startStopProgram(slotId);
     showCurrentProgramProgress = showProgress;
     const success = showProgress

@@ -27,7 +27,14 @@ import {
     uploadFileToHub,
     uploadProgramToHub,
 } from "./shared-extension";
-import { Command, setTimeoutAsync } from "./utils";
+import {
+    Command,
+    getImportedModuleNames,
+    hasLegoProgramHeader,
+    parseLegoProgramHeader,
+    setTimeoutAsync,
+    validateLegoProgramManifest,
+} from "./utils";
 import { LiveDataViewProvider } from "./views/live-telemetry-provider";
 
 let mpyWasm: Uint8Array | undefined;
@@ -49,6 +56,13 @@ interface StoredConnection {
 
 interface CombinedHubQuickPickItem extends HubQuickPickItem {
     clientType: Client;
+}
+
+interface LegoProgramFile {
+    filePath: string;
+    relativePath: string;
+    slotId: number;
+    includeFileNames: string[];
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -161,6 +175,7 @@ export function activate(context: vscode.ExtensionContext) {
                     },
                     async (progress) => {
                         await performUploadProgram(
+                            vscode.window.activeTextEditor!.document.fileName,
                             programInfo.slotId,
                             programInfo.includeFileNames,
                             progress,
@@ -186,6 +201,70 @@ export function activate(context: vscode.ExtensionContext) {
         },
     );
 
+    const uploadAllProgramsCommand = vscode.commands.registerCommand(
+        Command.UploadAllPrograms,
+        async (folderUri: vscode.Uri) => {
+            if (!getClient()?.isConnectedIn) {
+                vscode.window.showErrorMessage(
+                    "LEGO Hub not connected! Please connect first!",
+                );
+                return;
+            }
+
+            try {
+                const programs = findLegoPrograms(folderUri.fsPath);
+                validateLegoProgramManifest(programs.map(program => ({
+                    fileName: program.relativePath,
+                    slotId: program.slotId,
+                })));
+
+                for (const program of programs) {
+                    loadIncludeFiles(program.filePath, program.includeFileNames);
+                }
+
+                if (programs.length === 0) {
+                    vscode.window.showInformationMessage(
+                        "No Python files with a LEGO header were found.",
+                    );
+                    return;
+                }
+
+                programs.sort((left, right) => left.slotId - right.slotId);
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: `Uploading ${programs.length} LEGO programs...`,
+                    },
+                    async (progress) => {
+                        const increment = 100 / programs.length;
+                        for (const program of programs) {
+                            progress.report({
+                                message: `${program.relativePath} (slot ${program.slotId})`,
+                            });
+                            await performUploadProgram(
+                                program.filePath,
+                                program.slotId,
+                                program.includeFileNames,
+                            );
+                            progress.report({ increment });
+                        }
+                    },
+                );
+
+                vscode.window.showInformationMessage(
+                    `${programs.length} LEGO programs uploaded!`,
+                );
+            }
+            catch (e) {
+                console.error(e);
+                vscode.window.showErrorMessage(
+                    "Upload All Failed!" +
+                        (e instanceof Error ? ` ${e.message}` : ""),
+                );
+            }
+        },
+    );
+
     context.subscriptions.push(
         vscode.commands.registerCommand(
             "lego-spikeprime-mindstorms-vscode.showLiveTelemetry",
@@ -205,6 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         connectToHubCommand,
+        uploadAllProgramsCommand,
         uploadProgramCommand,
         vscode.window.registerWebviewViewProvider(
             LiveDataViewProvider.viewType,
@@ -372,43 +452,44 @@ export async function deactivate() {
 }
 
 async function performUploadProgram(
+    programPath: string,
     slotId: number,
     includeFileNames: string[],
     progress?: vscode.Progress<{ increment: number }>,
 ) {
-    const currentlyOpenTabFileUri =
-        vscode.window.activeTextEditor?.document.uri;
-    const currentlyOpenTabFilePath =
-        vscode.window.activeTextEditor?.document.fileName;
     const config = vscode.workspace.getConfiguration();
 
-    if (currentlyOpenTabFilePath && currentlyOpenTabFileUri) {
+    if (programPath) {
         const logger = getLogger();
         const currentlyOpenTabFileName = path
-            .basename(currentlyOpenTabFilePath)
-            .replace(path.extname(currentlyOpenTabFilePath), "");
+            .basename(programPath)
+            .replace(path.extname(programPath), "");
         const includeFiles = loadIncludeFiles(
-            currentlyOpenTabFilePath,
+            programPath,
             includeFileNames,
         );
-        const assembledFile = assembleFile(
-            currentlyOpenTabFileUri.fsPath,
-            new Set(includeFiles.map(file => file.path)),
+        const importedFiles = loadImportedFiles(
+            programPath,
+            includeFiles,
         );
+        const sourceFile = fs.readFileSync(programPath);
         const isSaveFileToUploadIn = config.get<boolean>(
             "legoSpikePrimeMindstorms.saveFileToUpload",
         );
         const customPreprocessorPath = config.get<string>(
             "legoSpikePrimeMindstorms.customPrepocessorPath",
         );
+        const compileBeforeUpload = config.get<boolean>(
+            "legoSpikePrimeMindstorms.compileBeforeUpload",
+        ) ?? false;
         let assembledFilePath = isSaveFileToUploadIn
             ? path.join(
-                path.dirname(currentlyOpenTabFilePath),
+                path.dirname(programPath),
                 `${currentlyOpenTabFileName}.assembled.py`,
             )
             : path.join(os.tmpdir(), `${v7()}.py`);
 
-        fs.writeFileSync(assembledFilePath, assembledFile!, "utf8");
+        fs.writeFileSync(assembledFilePath, sourceFile);
 
         if (customPreprocessorPath) {
             const preprocessedFilePath = await executeCustomPreprocessor(
@@ -432,7 +513,7 @@ async function performUploadProgram(
         }
 
         let compileResult: mpy.CompileResult | undefined;
-        if (config.get("legoSpikePrimeMindstorms.compileBeforeUpload")) {
+        if (compileBeforeUpload) {
             compileResult = await mpy.compile(
                 path.basename(assembledFilePath),
                 fs.readFileSync(assembledFilePath).toString("utf-8"),
@@ -449,11 +530,27 @@ async function performUploadProgram(
         }
 
         const data = compileResult?.mpy ?? fs.readFileSync(assembledFilePath);
+        const auxiliaryFiles = await prepareAuxiliaryFiles(
+            [...includeFiles, ...importedFiles],
+            compileBeforeUpload,
+        );
         await clearProgramSlot(slotId);
-        for (const includeFile of includeFiles) {
-            await uploadFileToHub(includeFile.data, includeFile.name, slotId);
+        for (const auxiliaryFile of auxiliaryFiles) {
+            await uploadFileToHub(
+                auxiliaryFile.data,
+                auxiliaryFile.name,
+                slotId,
+                undefined,
+                auxiliaryFile.sourceName,
+            );
         }
-        await uploadProgramToHub(data, slotId, !!compileResult?.mpy, progress);
+        await uploadProgramToHub(
+            data,
+            path.basename(programPath),
+            slotId,
+            !!compileResult?.mpy,
+            progress,
+        );
 
         // Remove temp file if needed
         if (customPreprocessorPath || !isSaveFileToUploadIn) {
@@ -465,6 +562,78 @@ async function performUploadProgram(
             }
         }
     }
+}
+
+async function prepareAuxiliaryFiles(
+    files: Array<{ name: string, data: Uint8Array }>,
+    compileBeforeUpload: boolean,
+): Promise<Array<{ name: string, sourceName: string, data: Uint8Array }>> {
+    const logger = getLogger();
+    const preparedFiles: Array<{ name: string, sourceName: string, data: Uint8Array }> = [];
+
+    for (const file of files) {
+        if (!compileBeforeUpload || path.extname(file.name).toLowerCase() !== ".py") {
+            preparedFiles.push({ ...file, sourceName: file.name });
+            continue;
+        }
+
+        const compileResult = await mpy.compile(
+            file.name,
+            new TextDecoder().decode(file.data),
+            [],
+            undefined,
+            mpyWasm,
+        );
+        if (compileResult.status !== 0 || !compileResult.mpy) {
+            logger?.error(`Compilation failed for ${file.name}:\r\n`);
+            logger?.error(compileResult.err.join("\r\n"));
+            logger?.error("\r\n");
+            throw new Error(`Compilation failed for ${file.name}`);
+        }
+
+        const name = file.name.replace(/\.py$/i, ".mpy");
+        if (new TextEncoder().encode(name).length > 31) {
+            throw new Error(`Compiled file name is too long: ${name}`);
+        }
+        preparedFiles.push({ name, sourceName: file.name, data: compileResult.mpy });
+    }
+
+    return preparedFiles;
+}
+
+function findLegoPrograms(folderPath: string): LegoProgramFile[] {
+    const programs: LegoProgramFile[] = [];
+    const pendingDirectories = [folderPath];
+
+    while (pendingDirectories.length > 0) {
+        const currentDirectory = pendingDirectories.pop()!;
+        const entries = fs.readdirSync(currentDirectory, { withFileTypes: true })
+            .sort((left, right) => left.name.localeCompare(right.name));
+
+        for (const entry of entries) {
+            const entryPath = path.join(currentDirectory, entry.name);
+            if (entry.isDirectory()) {
+                pendingDirectories.push(entryPath);
+            }
+            else if (entry.isFile() && path.extname(entry.name).toLowerCase() === ".py") {
+                const [firstLine = ""] = fs.readFileSync(entryPath, "utf8").split(/\r?\n/, 1);
+                if (!hasLegoProgramHeader(firstLine)) {
+                    continue;
+                }
+
+                const header = parseLegoProgramHeader(firstLine);
+                programs.push({
+                    filePath: entryPath,
+                    relativePath: path.relative(folderPath, entryPath)
+                        .split(path.sep).join("/"),
+                    slotId: header.slotId,
+                    includeFileNames: header.includeFileNames,
+                });
+            }
+        }
+    }
+
+    return programs;
 }
 
 function loadIncludeFiles(
@@ -488,76 +657,50 @@ function loadIncludeFiles(
     });
 }
 
-/**
- * The provided file should be assembled by replacing the import statements with the content of the imported local python file.
- *
- * @param filePath The path to the file to be assembled.
- * @returns Uint8Array containing the assembled file content.
- */
-function assembleFile(
-    filePath: string,
-    excludedFiles = new Set<string>(),
-): Uint8Array | undefined {
-    try {
-        const fileContent = fs.readFileSync(filePath, "utf-8");
-        const assembledLines: string[] = fileContent.split("\n");
-        const includedFiles: string[] = [];
+function loadImportedFiles(
+    programPath: string,
+    includeFiles: Array<{ name: string, path: string, data: Uint8Array }>,
+): Array<{ name: string, path: string, data: Uint8Array }> {
+    const programDirectory = path.dirname(programPath);
+    const knownPaths = new Set([
+        path.resolve(programPath),
+        ...includeFiles.map(file => path.resolve(file.path)),
+    ]);
+    const pendingPaths = [
+        programPath,
+        ...includeFiles
+            .filter(file => path.extname(file.name).toLowerCase() === ".py")
+            .map(file => file.path),
+    ];
+    const importedFiles: Array<{ name: string, path: string, data: Uint8Array }> = [];
 
-        const pattern = /^from\s+([\w\d_]+)\s+import\s+\*/;
-
-        let startLine = 0;
-
-        for (let index = startLine; index < assembledLines.length; index++) {
-            const line = assembledLines[index];
-
-            const match = line.match(pattern);
-
-            if (!match?.[1]) continue;
-
-            let includePath = match[1] + ".py";
-            includePath = path.resolve(path.dirname(filePath), includePath);
-            if (excludedFiles.has(includePath)) {
+    while (pendingPaths.length > 0) {
+        const currentPath = pendingPaths.shift()!;
+        const source = fs.readFileSync(currentPath, "utf-8");
+        for (const moduleName of getImportedModuleNames(source)) {
+            const name = `${moduleName}.py`;
+            const importedPath = path.resolve(programDirectory, name);
+            if (knownPaths.has(importedPath)
+                || !fs.existsSync(importedPath)
+                || !fs.statSync(importedPath).isFile()) {
                 continue;
             }
-            if (!fs.existsSync(includePath)) {
-                vscode.window.showWarningMessage(
-                    "File: " + includePath + " not found",
-                );
-                continue;
+            if (new TextEncoder().encode(name).length > 31) {
+                throw new Error(`Imported file name is too long: ${name}`);
             }
-            assembledLines.splice(index, 1);
-            if (
-                includedFiles.some(
-                    (includedFile) => includedFile === includePath,
-                )
-            )
-                continue;
-            try {
-                startLine = index;
 
-                includedFiles.push(includePath);
-                const includedContent = fs.readFileSync(includePath, "utf-8");
-                const includedContentSplitted = includedContent.split("\n");
-                assembledLines.splice(index, 0, ...includedContentSplitted);
-                index--;
-            }
-            catch (includeError) {
-                vscode.window.showErrorMessage(
-                    "Error reading included file:" + includeError,
-                );
-            }
+            const importedFile = {
+                name,
+                path: importedPath,
+                data: fs.readFileSync(importedPath),
+            };
+            knownPaths.add(importedPath);
+            importedFiles.push(importedFile);
+            pendingPaths.push(importedPath);
         }
-
-        const extendedContent = assembledLines.join("\n");
-        const extendedBuffer = Buffer.from(extendedContent, "utf-8");
-
-        return new Uint8Array(extendedBuffer);
     }
-    catch (error) {
-        console.error("Error extending file:", error);
-        vscode.window.showErrorMessage("Error extending file: " + error);
-        return undefined;
-    }
+
+    return importedFiles;
 }
 
 /**

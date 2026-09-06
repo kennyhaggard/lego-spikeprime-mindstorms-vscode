@@ -3,7 +3,7 @@
   "displayName": "LEGO SPIKE Prime / MINDSTORMS Robot Inventor Extension",
   "description": "Helps you connect Lego's SPIKE Prime/MINDSTORMS Robot Inventor",
   "publisher": "PeterStaev",
-  "version": "3.1.4-phealy.2",
+  "version": "3.1.4-phealy.7",
   "engines": {
     "vscode": "^1.66.0"
   },
@@ -99,6 +99,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "lego-spikeprime-mindstorms-vscode.uploadAllPrograms",
+        "title": "LEGO: Upload All",
+        "enablement": "lego-spikeprime-mindstorms-vscode.isConnectedIn && !isWeb"
+      },
+      {
         "command": "lego-spikeprime-mindstorms-vscode.showTerminal",
         "title": "LEGO Hub: Show Log Terminal",
         "icon": "$(terminal)"
@@ -132,6 +137,19 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "command": "lego-spikeprime-mindstorms-vscode.uploadAllPrograms",
+          "group": "lego@1",
+          "when": "explorerResourceIsFolder && !isWeb"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "lego-spikeprime-mindstorms-vscode.uploadAllPrograms",
+          "when": "false"
+        }
+      ],
       "editor/title": [
         {
           "command": "lego-spikeprime-mindstorms-vscode.startProgram",

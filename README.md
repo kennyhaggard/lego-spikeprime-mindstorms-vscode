@@ -58,27 +58,20 @@ The **LEGO Hub: Start Program** command runs code that is already stored in the 
 
 ![slot-selection](images/slot-selection.png)
 
-### Preprocessor
+### Local modules
 
-To support multi files before the compilation (or upload if not compiled) imported files will be inserted in the current python script.
-At the moment only
+Python files referenced by `import` and `from ... import ...` statements are automatically uploaded when a matching `.py` file exists in the program's directory. Local modules are uploaded as separate files and are scanned recursively for their own local imports. Missing modules are left for HubOS to resolve.
 
-```python
-from file_name import *
-```
+When `compileBeforeUpload` is enabled, automatically discovered and explicitly included `.py` files are compiled and uploaded as `.mpy` modules. Other explicitly included file types are uploaded unchanged.
 
-is supported. Files not found are skipped (in the hope they exist on the hub). Nevertheless an error will inform you.
-
-> [!NOTE]  
-> This is not supported for web extension usage.
+This behavior is supported by both the desktop and web extensions.
 
 ### Custom Preprocessor
 
 The plugin has a settings where you can specify an external program/script that should be executed before uploading the program
 to the hub. This will receive the contents of the file as stdin. It should output the resulting file contents to stdout and exit the process with `0`.
 
-> [!NOTE]  
-> This will be executed AFTER the builtin preprocessor for combining the files and right before compiling and uploading the program to the hub!
+The custom preprocessor runs immediately before compiling and uploading the main program. Automatically discovered local modules are uploaded separately and are not passed through the custom preprocessor.
 
 > [!NOTE]  
 > This is not supported for web extension usage.
@@ -118,9 +111,11 @@ Use `include:` to copy files from the program's directory into the same hub slot
 # LEGO include:gadget.py,helpers.py slot:5 autostart
 ```
 
-The target slot is cleared before each upload, so files from an earlier upload are removed. Explicitly included files are not combined into `program.py` by the built-in wildcard-import preprocessor.
+The target slot is cleared before each upload, so files from an earlier upload are removed. Explicitly included and automatically discovered files are uploaded separately and are not combined into `program.py`.
 
 Without `autostart`, **Upload Program** uploads the file to the declared slot but does not run it. The header must begin at the first character of the first line and uses uppercase `LEGO`.
+
+To upload a collection of programs, right-click a folder in the Explorer and select **LEGO: Upload All**. The extension recursively finds Python files with LEGO headers, verifies that each has a valid unique slot, and uploads every program with its included files. Batch uploads do not start programs marked `autostart`.
 
 ## Credits
 

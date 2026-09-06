@@ -6,6 +6,25 @@ import * as vscode from "vscode";
 import { Logger } from "../../logger";
 
 suite("Logger Test Suite", () => {
+    test("Writes blue operation fragments on one terminal line", () => {
+        const emitter = new vscode.EventEmitter<string>();
+        const logger = new Logger(emitter);
+        const output: string[] = [];
+        const subscription = emitter.event(text => output.push(text));
+
+        logger.info("Uploading file gadget.py to slot 0...");
+        logger.info("done.\r\n");
+
+        assert.strictEqual(
+            output.join(""),
+            "\u001b[36mUploading file gadget.py to slot 0...\u001b[0m" +
+                "\u001b[36mdone.\r\n\u001b[0m",
+        );
+
+        subscription.dispose();
+        emitter.dispose();
+    });
+
     test("Writes raw messages as JSONL", async () => {
         const uri = vscode.Uri.file(path.join(
             os.tmpdir(),

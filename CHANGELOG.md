@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Upload same-directory Python modules referenced by import statements instead of inlining wildcard imports, compile uploaded modules when compilation is enabled, and show source filenames in upload logs.
+- Show file upload and program start operations in the LEGO Hub log terminal.
+- Add an Explorer folder command to validate and upload all LEGO programs recursively.
 - Add `include:` support to LEGO program headers for uploading additional files, clearing the target slot before each upload.
 - Fix truncated Bluetooth console output and program progress notifications that remain open after a program stops immediately after starting.
 - Update Bluetooth hub search results as hubs are discovered, and show each hub's name and formatted MAC address.

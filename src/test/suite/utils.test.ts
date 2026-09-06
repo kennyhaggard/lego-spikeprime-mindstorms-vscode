@@ -2,8 +2,10 @@ import * as assert from "assert";
 
 import {
     formatBluetoothAddress,
+    getImportedModuleNames,
     hasLegoProgramHeader,
     parseLegoProgramHeader,
+    validateLegoProgramManifest,
 } from "../../utils";
 
 suite("Utils Test Suite", () => {
@@ -47,6 +49,64 @@ suite("Utils Test Suite", () => {
                 "# LEGO slot:3 include:gadget.py,,gadget.py include:extra.py",
             ).includeFileNames,
             ["gadget.py", "extra.py"],
+        );
+    });
+
+    test("Finds local module candidates in Python import statements", () => {
+        assert.deepStrictEqual(
+            getImportedModuleNames([
+                "import gadget",
+                "import helpers as h, utilities",
+                "from config import VALUE",
+                "from wildcard import *",
+                "    from nested import run",
+                "from . import sibling as local",
+                "from .relative import item",
+                "from package.module import item",
+                "from ..parent import item",
+                "# import commented_out",
+            ].join("\n")),
+            [
+                "gadget",
+                "helpers",
+                "utilities",
+                "config",
+                "wildcard",
+                "nested",
+                "sibling",
+                "relative",
+            ],
+        );
+    });
+
+    test("Finds imports continued with a backslash", () => {
+        assert.deepStrictEqual(
+            getImportedModuleNames("import first, \\\n                second as alias"),
+            ["first", "second"],
+        );
+    });
+
+    test("Validates unique program slots", () => {
+        assert.doesNotThrow(() => validateLegoProgramManifest([
+            { fileName: "mission1.py", slotId: 0 },
+            { fileName: "sub/mission2.py", slotId: 1 },
+        ]));
+
+        assert.throws(
+            () => validateLegoProgramManifest([
+                { fileName: "mission1.py", slotId: 0 },
+                { fileName: "sub/mission2.py", slotId: 0 },
+            ]),
+            /Slot 0 is declared by both mission1\.py and sub\/mission2\.py/,
+        );
+    });
+
+    test("Rejects invalid batch program slots", () => {
+        assert.throws(
+            () => validateLegoProgramManifest([
+                { fileName: "mission.py", slotId: NaN },
+            ]),
+            /mission\.py must declare a slot from 0 to 19/,
         );
     });
 });

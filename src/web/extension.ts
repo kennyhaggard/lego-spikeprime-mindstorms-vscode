@@ -17,7 +17,11 @@ import {
     uploadFileToHub,
     uploadProgramToHub,
 } from "../shared-extension";
-import { Command, setTimeoutAsync } from "../utils";
+import {
+    Command,
+    getImportedModuleNames,
+    setTimeoutAsync,
+} from "../utils";
 import { WebUsbClient } from "./clients/web-usb-client";
 
 let wasmUri: vscode.Uri;
@@ -118,6 +122,9 @@ async function performUploadProgram(
 
     const document = editor.document;
     const documentContent = document.getText();
+    const compileBeforeUpload = config.get<boolean>(
+        "legoSpikePrimeMindstorms.compileBeforeUpload",
+    ) ?? false;
     const includeFiles = await Promise.all(includeFileNames.map(async (name) => {
         if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
             throw new Error(`Included file must be in the same directory: ${name}`);
@@ -134,9 +141,14 @@ async function performUploadProgram(
             throw new Error(`Included file not found: ${uri.toString()}`);
         }
     }));
+    const importedFiles = await loadImportedFiles(
+        document.uri,
+        documentContent,
+        includeFiles,
+    );
 
     let compileResult: mpy.CompileResult | undefined;
-    if (config.get("legoSpikePrimeMindstorms.compileBeforeUpload")) {
+    if (compileBeforeUpload) {
         compileResult = await mpy.compile(
             document.fileName,
             documentContent,
@@ -152,14 +164,107 @@ async function performUploadProgram(
     }
 
     const data = compileResult?.mpy ?? new TextEncoder().encode(documentContent);
+    const auxiliaryFiles = await prepareAuxiliaryFiles(
+        [...includeFiles, ...importedFiles],
+        compileBeforeUpload,
+    );
     await clearProgramSlot(slotId);
-    for (const includeFile of includeFiles) {
-        await uploadFileToHub(includeFile.data, includeFile.name, slotId);
+    for (const auxiliaryFile of auxiliaryFiles) {
+        await uploadFileToHub(
+            auxiliaryFile.data,
+            auxiliaryFile.name,
+            slotId,
+            undefined,
+            auxiliaryFile.sourceName,
+        );
     }
     await uploadProgramToHub(
         data,
+        document.uri.path.split("/").pop() ?? document.fileName,
         slotId,
         !!compileResult?.mpy,
         progress,
     );
+}
+
+async function prepareAuxiliaryFiles(
+    files: Array<{ name: string, data: Uint8Array }>,
+    compileBeforeUpload: boolean,
+): Promise<Array<{ name: string, sourceName: string, data: Uint8Array }>> {
+    const logger = getLogger();
+    const preparedFiles: Array<{ name: string, sourceName: string, data: Uint8Array }> = [];
+
+    for (const file of files) {
+        if (!compileBeforeUpload || !file.name.toLowerCase().endsWith(".py")) {
+            preparedFiles.push({ ...file, sourceName: file.name });
+            continue;
+        }
+
+        const compileResult = await mpy.compile(
+            file.name,
+            new TextDecoder().decode(file.data),
+            [],
+            wasmUri.toString(),
+        );
+        if (compileResult.status !== 0 || !compileResult.mpy) {
+            logger?.error(`Compilation failed for ${file.name}:\r\n`);
+            logger?.error(compileResult.err.join("\r\n"));
+            logger?.error("\r\n");
+            throw new Error(`Compilation failed for ${file.name}`);
+        }
+
+        const name = file.name.replace(/\.py$/i, ".mpy");
+        if (new TextEncoder().encode(name).length > 31) {
+            throw new Error(`Compiled file name is too long: ${name}`);
+        }
+        preparedFiles.push({ name, sourceName: file.name, data: compileResult.mpy });
+    }
+
+    return preparedFiles;
+}
+
+async function loadImportedFiles(
+    programUri: vscode.Uri,
+    programSource: string,
+    includeFiles: Array<{ name: string, data: Uint8Array }>,
+): Promise<Array<{ name: string, data: Uint8Array }>> {
+    const knownNames = new Set([
+        programUri.path.split("/").pop() ?? programUri.path,
+        ...includeFiles.map(file => file.name),
+    ]);
+    const pendingSources = [
+        programSource,
+        ...includeFiles
+            .filter(file => file.name.toLowerCase().endsWith(".py"))
+            .map(file => new TextDecoder().decode(file.data)),
+    ];
+    const importedFiles: Array<{ name: string, data: Uint8Array }> = [];
+
+    while (pendingSources.length > 0) {
+        const source = pendingSources.shift()!;
+        for (const moduleName of getImportedModuleNames(source)) {
+            const name = `${moduleName}.py`;
+            if (knownNames.has(name)) {
+                continue;
+            }
+            if (new TextEncoder().encode(name).length > 31) {
+                throw new Error(`Imported file name is too long: ${name}`);
+            }
+
+            const uri = vscode.Uri.joinPath(programUri, "..", name);
+            let data: Uint8Array;
+            try {
+                data = await vscode.workspace.fs.readFile(uri);
+            }
+            catch {
+                continue;
+            }
+
+            knownNames.add(name);
+            importedFiles.push({ name, data });
+            pendingSources.push(new TextDecoder().decode(data));
+        }
+    }
+
+    return importedFiles;
 }
