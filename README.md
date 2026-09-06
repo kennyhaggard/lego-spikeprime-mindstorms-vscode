@@ -103,7 +103,7 @@ This feature requires the desktop extension host because Pylance cannot index ex
 During active development, you can avoid repeated slot and autostart prompts by placing a LEGO header on the first line of the file:
 
 ```python
-# LEGO slot:<0-19> [autostart]
+# LEGO slot:<0-19> [include:<filename>,<filename>] [autostart]
 ```
 
 For example, this uploads the current file to slot 5 and starts it after the upload completes:
@@ -111,6 +111,14 @@ For example, this uploads the current file to slot 5 and starts it after the upl
 ```python
 # LEGO slot:5 autostart
 ```
+
+Use `include:` to copy files from the program's directory into the same hub slot as separate modules:
+
+```python
+# LEGO include:gadget.py,helpers.py slot:5 autostart
+```
+
+The target slot is cleared before each upload, so files from an earlier upload are removed. Explicitly included files are not combined into `program.py` by the built-in wildcard-import preprocessor.
 
 Without `autostart`, **Upload Program** uploads the file to the declared slot but does not run it. The header must begin at the first character of the first line and uses uppercase `LEGO`.
 

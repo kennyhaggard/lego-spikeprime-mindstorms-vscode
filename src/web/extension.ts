@@ -3,6 +3,7 @@ import * as mpy from "@pybricks/mpy-cross-v6";
 import * as vscode from "vscode";
 
 import {
+    clearProgramSlot,
     configureRawMessageLogging,
     getClient,
     getLogger,
@@ -13,6 +14,7 @@ import {
     onHubConnected,
     registerSharedCommands,
     startProgramInSlot,
+    uploadFileToHub,
     uploadProgramToHub,
 } from "../shared-extension";
 import { Command, setTimeoutAsync } from "../utils";
@@ -68,7 +70,11 @@ export async function activate(context: vscode.ExtensionContext) {
                         : `Uploading Program to Hub (Slot #${programInfo.slotId})...`,
                 },
                 async (progress) => {
-                    await performUploadProgram(programInfo.slotId, progress);
+                    await performUploadProgram(
+                        programInfo.slotId,
+                        programInfo.includeFileNames,
+                        progress,
+                    );
                     if (programInfo.isAutostartIn) {
                         await setTimeoutAsync(() => { /* noop */ }, 250);
                         await startProgramInSlot(programInfo.slotId, false);
@@ -96,7 +102,11 @@ export async function deactivate() {
     await onDeactivate();
 }
 
-async function performUploadProgram(slotId: number, progress?: vscode.Progress<{ increment: number }>) {
+async function performUploadProgram(
+    slotId: number,
+    includeFileNames: string[],
+    progress?: vscode.Progress<{ increment: number }>,
+) {
     const editor = vscode.window.activeTextEditor;
     const config = vscode.workspace.getConfiguration();
     const logger = getLogger();
@@ -108,6 +118,22 @@ async function performUploadProgram(slotId: number, progress?: vscode.Progress<{
 
     const document = editor.document;
     const documentContent = document.getText();
+    const includeFiles = await Promise.all(includeFileNames.map(async (name) => {
+        if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
+            throw new Error(`Included file must be in the same directory: ${name}`);
+        }
+        if (new TextEncoder().encode(name).length > 31) {
+            throw new Error(`Included file name is too long: ${name}`);
+        }
+
+        const uri = vscode.Uri.joinPath(document.uri, "..", name);
+        try {
+            return { name, data: await vscode.workspace.fs.readFile(uri) };
+        }
+        catch {
+            throw new Error(`Included file not found: ${uri.toString()}`);
+        }
+    }));
 
     let compileResult: mpy.CompileResult | undefined;
     if (config.get("legoSpikePrimeMindstorms.compileBeforeUpload")) {
@@ -126,6 +152,10 @@ async function performUploadProgram(slotId: number, progress?: vscode.Progress<{
     }
 
     const data = compileResult?.mpy ?? new TextEncoder().encode(documentContent);
+    await clearProgramSlot(slotId);
+    for (const includeFile of includeFiles) {
+        await uploadFileToHub(includeFile.data, includeFile.name, slotId);
+    }
     await uploadProgramToHub(
         data,
         slotId,

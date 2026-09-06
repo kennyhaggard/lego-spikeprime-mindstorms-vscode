@@ -13,6 +13,7 @@ import { BleClient } from "./clients/ble-client";
 import { UsbClient } from "./clients/usb-client";
 import { registerHubOS3Stubs } from "./pylance-stubs";
 import {
+    clearProgramSlot,
     configureRawMessageLogging,
     getClient,
     getLogger,
@@ -23,6 +24,7 @@ import {
     onHubConnected,
     registerSharedCommands,
     startProgramInSlot,
+    uploadFileToHub,
     uploadProgramToHub,
 } from "./shared-extension";
 import { Command, setTimeoutAsync } from "./utils";
@@ -158,7 +160,11 @@ export function activate(context: vscode.ExtensionContext) {
                             : `Uploading Program to Hub (Slot #${programInfo.slotId})...`,
                     },
                     async (progress) => {
-                        await performUploadProgram(programInfo.slotId, progress);
+                        await performUploadProgram(
+                            programInfo.slotId,
+                            programInfo.includeFileNames,
+                            progress,
+                        );
                         if (programInfo.isAutostartIn) {
                             await setTimeoutAsync(() => { /* noop */ }, 250);
                             await startProgramInSlot(programInfo.slotId, false);
@@ -367,6 +373,7 @@ export async function deactivate() {
 
 async function performUploadProgram(
     slotId: number,
+    includeFileNames: string[],
     progress?: vscode.Progress<{ increment: number }>,
 ) {
     const currentlyOpenTabFileUri =
@@ -380,7 +387,14 @@ async function performUploadProgram(
         const currentlyOpenTabFileName = path
             .basename(currentlyOpenTabFilePath)
             .replace(path.extname(currentlyOpenTabFilePath), "");
-        const assembledFile = assembleFile(currentlyOpenTabFileUri.fsPath);
+        const includeFiles = loadIncludeFiles(
+            currentlyOpenTabFilePath,
+            includeFileNames,
+        );
+        const assembledFile = assembleFile(
+            currentlyOpenTabFileUri.fsPath,
+            new Set(includeFiles.map(file => file.path)),
+        );
         const isSaveFileToUploadIn = config.get<boolean>(
             "legoSpikePrimeMindstorms.saveFileToUpload",
         );
@@ -435,6 +449,10 @@ async function performUploadProgram(
         }
 
         const data = compileResult?.mpy ?? fs.readFileSync(assembledFilePath);
+        await clearProgramSlot(slotId);
+        for (const includeFile of includeFiles) {
+            await uploadFileToHub(includeFile.data, includeFile.name, slotId);
+        }
         await uploadProgramToHub(data, slotId, !!compileResult?.mpy, progress);
 
         // Remove temp file if needed
@@ -449,13 +467,37 @@ async function performUploadProgram(
     }
 }
 
+function loadIncludeFiles(
+    programPath: string,
+    includeFileNames: string[],
+): Array<{ name: string, path: string, data: Uint8Array }> {
+    return includeFileNames.map((name) => {
+        if (path.basename(name) !== name || name === "." || name === "..") {
+            throw new Error(`Included file must be in the same directory: ${name}`);
+        }
+        if (new TextEncoder().encode(name).length > 31) {
+            throw new Error(`Included file name is too long: ${name}`);
+        }
+
+        const includePath = path.resolve(path.dirname(programPath), name);
+        if (!fs.existsSync(includePath) || !fs.statSync(includePath).isFile()) {
+            throw new Error(`Included file not found: ${includePath}`);
+        }
+
+        return { name, path: includePath, data: fs.readFileSync(includePath) };
+    });
+}
+
 /**
  * The provided file should be assembled by replacing the import statements with the content of the imported local python file.
  *
  * @param filePath The path to the file to be assembled.
  * @returns Uint8Array containing the assembled file content.
  */
-function assembleFile(filePath: string): Uint8Array | undefined {
+function assembleFile(
+    filePath: string,
+    excludedFiles = new Set<string>(),
+): Uint8Array | undefined {
     try {
         const fileContent = fs.readFileSync(filePath, "utf-8");
         const assembledLines: string[] = fileContent.split("\n");
@@ -474,6 +516,9 @@ function assembleFile(filePath: string): Uint8Array | undefined {
 
             let includePath = match[1] + ".py";
             includePath = path.resolve(path.dirname(filePath), includePath);
+            if (excludedFiles.has(includePath)) {
+                continue;
+            }
             if (!fs.existsSync(includePath)) {
                 vscode.window.showWarningMessage(
                     "File: " + includePath + " not found",

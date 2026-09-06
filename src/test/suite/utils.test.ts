@@ -1,6 +1,10 @@
 import * as assert from "assert";
 
-import { formatBluetoothAddress, hasLegoProgramHeader } from "../../utils";
+import {
+    formatBluetoothAddress,
+    hasLegoProgramHeader,
+    parseLegoProgramHeader,
+} from "../../utils";
 
 suite("Utils Test Suite", () => {
     test("Formats a compact Bluetooth address", () => {
@@ -22,5 +26,27 @@ suite("Utils Test Suite", () => {
         assert.strictEqual(hasLegoProgramHeader(" # LEGO slot:3"), false);
         assert.strictEqual(hasLegoProgramHeader("# lego slot:3"), false);
         assert.strictEqual(hasLegoProgramHeader("print('LEGO')"), false);
+    });
+
+    test("Parses slot, autostart, and included files in any order", () => {
+        assert.deepStrictEqual(
+            parseLegoProgramHeader(
+                "# LEGO include:gadget.py,helpers.py slot:0 autostart",
+            ),
+            {
+                slotId: 0,
+                isAutostartIn: true,
+                includeFileNames: ["gadget.py", "helpers.py"],
+            },
+        );
+    });
+
+    test("Ignores empty and duplicate include entries", () => {
+        assert.deepStrictEqual(
+            parseLegoProgramHeader(
+                "# LEGO slot:3 include:gadget.py,,gadget.py include:extra.py",
+            ).includeFileNames,
+            ["gadget.py", "extra.py"],
+        );
     });
 });

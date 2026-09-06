@@ -3,6 +3,8 @@ import * as vscode from "vscode";
 import { pack, unpack } from "../cobs";
 import { Logger } from "../logger";
 import { BaseMessage } from "../messages/base-message";
+import { ClearSlotRequestMessage } from "../messages/clear-slot-request-message";
+import { ClearSlotResponseMessage } from "../messages/clear-slot-response-message";
 import { ConsoleNotificationMessage } from "../messages/console-notification-message";
 import { DeviceNotificationMessage } from "../messages/device-notification";
 import { DeviceNotificationRequestMessage } from "../messages/device-notification-request";
@@ -139,6 +141,18 @@ export abstract class BaseClient {
         }
     }
 
+    public async clearSlot(slot: number) {
+        const response = await this.sendMessage<
+            ClearSlotRequestMessage,
+            ClearSlotResponseMessage
+        >(
+            new ClearSlotRequestMessage(slot),
+            ClearSlotResponseMessage,
+        );
+
+        return response.IsAckIn;
+    }
+
     public async transferChunk(chunk: Uint8Array, runningCrc: number) {
         const response = await this.sendMessage<
             TransferChunkRequestMessage,
@@ -261,6 +275,9 @@ function deserializeMessage(
     let message: BaseMessage;
 
     switch (messageId) {
+        case ClearSlotResponseMessage.Id:
+            message = new ClearSlotResponseMessage();
+            break;
         case DeviceNotificationMessage.Id:
             message = new DeviceNotificationMessage();
             break;

@@ -6,6 +6,7 @@ import {
     Command,
     crc32WithAlignment,
     hasLegoProgramHeader,
+    parseLegoProgramHeader,
 } from "./utils";
 
 const writeEmitter = new vscode.EventEmitter<string>();
@@ -265,7 +266,11 @@ export function initHubStatusBarItems(context: vscode.ExtensionContext) {
     context.subscriptions.push(hubStatusBarItem);
 }
 
-export async function getProgramInfo(): Promise<{ slotId: number, isAutostartIn: boolean } | undefined> {
+export async function getProgramInfo(): Promise<{
+    slotId: number,
+    isAutostartIn: boolean,
+    includeFileNames: string[],
+} | undefined> {
     const editor = vscode.window.activeTextEditor;
 
     if (!editor) {
@@ -276,25 +281,9 @@ export async function getProgramInfo(): Promise<{ slotId: number, isAutostartIn:
     await vscode.commands.executeCommand("workbench.action.files.save");
 
     const header = editor?.document.lineAt(0).text;
-    let slotId: number = NaN;
-    let isAutostartIn: boolean = false;
-
-    // Header sample:
-    // # LEGO slot:3
-    if (hasLegoProgramHeader(header)) {
-        const split = header.split(/[:\s]/gi);
-        for (let loop = 0; loop < split.length; loop++) {
-            const element = split[loop];
-
-            if (element === "slot") {
-                slotId = +split[loop + 1];
-            }
-
-            if (element === "autostart") {
-                isAutostartIn = true;
-            }
-        }
-    }
+    const { isAutostartIn, includeFileNames, slotId: parsedSlotId } =
+        parseLegoProgramHeader(header);
+    let slotId = parsedSlotId;
 
     // Prompt for slot
     if (isNaN(slotId)
@@ -306,7 +295,7 @@ export async function getProgramInfo(): Promise<{ slotId: number, isAutostartIn:
         }
     }
 
-    return { slotId, isAutostartIn };
+    return { slotId, isAutostartIn, includeFileNames };
 }
 
 export async function onHubConnected() {
@@ -334,9 +323,27 @@ export async function uploadProgramToHub(
     isCompiledIn: boolean,
     progress?: vscode.Progress<{ increment: number }>,
 ) {
+    await uploadFileToHub(
+        data,
+        `program.${isCompiledIn ? "mpy" : "py"}`,
+        slotId,
+        progress,
+    );
+}
+
+export async function clearProgramSlot(slotId: number) {
+    await client!.clearSlot(slotId);
+}
+
+export async function uploadFileToHub(
+    data: Uint8Array,
+    fileName: string,
+    slotId: number,
+    progress?: vscode.Progress<{ increment: number }>,
+) {
     const uploadSize = data.length;
 
-    await client!.startFileUpload(`program.${isCompiledIn ? "mpy" : "py"}`, slotId, crc32WithAlignment(data));
+    await client!.startFileUpload(fileName, slotId, crc32WithAlignment(data));
 
     const blockSize: number = client!.maxChunkSize!;
     const increment = (1 / Math.ceil(uploadSize / blockSize)) * 100;

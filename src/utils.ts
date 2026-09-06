@@ -31,6 +31,40 @@ export function hasLegoProgramHeader(firstLine: string): boolean {
     return firstLine.startsWith("# LEGO");
 }
 
+export interface LegoProgramHeader {
+    slotId: number;
+    isAutostartIn: boolean;
+    includeFileNames: string[];
+}
+
+export function parseLegoProgramHeader(firstLine: string): LegoProgramHeader {
+    const includeFileNames: string[] = [];
+    let slotId = NaN;
+
+    if (hasLegoProgramHeader(firstLine)) {
+        for (const token of firstLine.slice("# LEGO".length).trim().split(/\s+/)) {
+            if (token.startsWith("slot:")) {
+                slotId = Number(token.slice("slot:".length));
+            }
+            else if (token.startsWith("include:")) {
+                for (const fileName of token.slice("include:".length).split(",")) {
+                    const trimmedFileName = fileName.trim();
+                    if (trimmedFileName && !includeFileNames.includes(trimmedFileName)) {
+                        includeFileNames.push(trimmedFileName);
+                    }
+                }
+            }
+        }
+    }
+
+    return {
+        slotId,
+        isAutostartIn: hasLegoProgramHeader(firstLine)
+            && firstLine.slice("# LEGO".length).trim().split(/\s+/).includes("autostart"),
+        includeFileNames,
+    };
+}
+
 export function crc32WithAlignment(data: Uint8Array, seed = 0): number {
     const remainder = data.length % CRC32_ALIGNMENT;
     const alignedData = new Uint8Array(data.length + (CRC32_ALIGNMENT - remainder) % CRC32_ALIGNMENT);
