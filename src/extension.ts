@@ -29,6 +29,7 @@ import {
 } from "./shared-extension";
 import {
     Command,
+    formatProgramLog,
     getImportedModuleNames,
     hasLegoProgramHeader,
     parseLegoProgramHeader,
@@ -203,7 +204,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const uploadAllProgramsCommand = vscode.commands.registerCommand(
         Command.UploadAllPrograms,
-        async (folderUri: vscode.Uri) => {
+        async (resourceUri?: vscode.Uri) => {
             if (!getClient()?.isConnectedIn) {
                 vscode.window.showErrorMessage(
                     "LEGO Hub not connected! Please connect first!",
@@ -212,7 +213,15 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             try {
-                const programs = findLegoPrograms(folderUri.fsPath);
+                const resourcePath = resourceUri?.fsPath
+                    || vscode.window.activeTextEditor?.document.uri.fsPath;
+                if (!resourcePath || !fs.existsSync(resourcePath)) {
+                    throw new Error("Save the active Python file before uploading its folder.");
+                }
+                const folderPath = fs.statSync(resourcePath).isDirectory()
+                    ? resourcePath
+                    : path.dirname(resourcePath);
+                const programs = findLegoPrograms(folderPath);
                 validateLegoProgramManifest(programs.map(program => ({
                     fileName: program.relativePath,
                     slotId: program.slotId,
@@ -230,6 +239,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 programs.sort((left, right) => left.slotId - right.slotId);
+                const folderName = path.basename(folderPath);
+                getLogger().info(
+                    `Upload All: starting ${programs.length} programs from ${folderName}.\r\n`,
+                );
                 await vscode.window.withProgress(
                     {
                         location: vscode.ProgressLocation.Notification,
@@ -249,6 +262,9 @@ export function activate(context: vscode.ExtensionContext) {
                             progress.report({ increment });
                         }
                     },
+                );
+                getLogger().info(
+                    `Upload All: finished ${programs.length} programs from ${folderName}.\r\n`,
                 );
 
                 vscode.window.showInformationMessage(
@@ -523,8 +539,15 @@ async function performUploadProgram(
             );
 
             if (compileResult?.status !== 0) {
-                logger?.error(compileResult.err.join("\r\n"));
-                logger?.error("\r\n");
+                logger?.error(formatProgramLog(
+                    slotId,
+                    `compilation failed for ${path.basename(programPath)}:\r\n`,
+                ));
+                logger?.error(
+                    compileResult.err
+                        .map(error => formatProgramLog(slotId, error))
+                        .join("\r\n") + "\r\n",
+                );
                 throw new Error("Compilation Failed!");
             }
         }
@@ -533,6 +556,7 @@ async function performUploadProgram(
         const auxiliaryFiles = await prepareAuxiliaryFiles(
             [...includeFiles, ...importedFiles],
             compileBeforeUpload,
+            slotId,
         );
         await clearProgramSlot(slotId);
         for (const auxiliaryFile of auxiliaryFiles) {
@@ -567,6 +591,7 @@ async function performUploadProgram(
 async function prepareAuxiliaryFiles(
     files: Array<{ name: string, data: Uint8Array }>,
     compileBeforeUpload: boolean,
+    slotId: number,
 ): Promise<Array<{ name: string, sourceName: string, data: Uint8Array }>> {
     const logger = getLogger();
     const preparedFiles: Array<{ name: string, sourceName: string, data: Uint8Array }> = [];
@@ -585,9 +610,15 @@ async function prepareAuxiliaryFiles(
             mpyWasm,
         );
         if (compileResult.status !== 0 || !compileResult.mpy) {
-            logger?.error(`Compilation failed for ${file.name}:\r\n`);
-            logger?.error(compileResult.err.join("\r\n"));
-            logger?.error("\r\n");
+            logger?.error(formatProgramLog(
+                slotId,
+                `compilation failed for ${file.name}:\r\n`,
+            ));
+            logger?.error(
+                compileResult.err
+                    .map(error => formatProgramLog(slotId, error))
+                    .join("\r\n") + "\r\n",
+            );
             throw new Error(`Compilation failed for ${file.name}`);
         }
 

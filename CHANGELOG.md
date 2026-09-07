@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+- Timestamp LEGO Hub terminal lines and log the start and successful completion of Upload All operations.
+- Log hub discovery, connection, and disconnection with the hub name and Bluetooth MAC address.
+- Add an Upload All action to the Python editor title bar.
 - Upload same-directory Python modules referenced by import statements instead of inlining wildcard imports, compile uploaded modules when compilation is enabled, and show source filenames in upload logs.
+- Prefix program operation and compilation logs with zero-padded slot numbers.
 - Show file upload and program start operations in the LEGO Hub log terminal.
 - Add an Explorer folder command to validate and upload all LEGO programs recursively.
 - Add `include:` support to LEGO program headers for uploading additional files, clearing the target slot before each upload.

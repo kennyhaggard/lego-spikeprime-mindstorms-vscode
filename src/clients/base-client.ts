@@ -58,6 +58,9 @@ export abstract class BaseClient {
     public get hubName() {
         return this._hubName;
     }
+    public get macAddress() {
+        return this._macAddress;
+    }
 
     protected _logger: Logger;
     protected _pendingMessagesPromises = new Map<
@@ -69,6 +72,8 @@ export abstract class BaseClient {
     >();
     protected _infoResponse: InfoResponseMessage | undefined;
     protected _hubName: string | undefined;
+    protected _macAddress: string | undefined;
+    private _isConnectionLogged = false;
 
     constructor(logger: Logger) {
         this._logger = logger;
@@ -125,6 +130,13 @@ export abstract class BaseClient {
         this._hubName = response.name;
 
         return this._hubName;
+    }
+
+    public logConnected() {
+        this._logger.info(
+            `Connected to hub ${this._hubName ?? "Unknown"} (MAC ${this._macAddress ?? "N/A"}).\r\n`,
+        );
+        this._isConnectionLogged = true;
     }
 
     public async startFileUpload(fileName: string, slot: number, crc: number) {
@@ -260,8 +272,15 @@ export abstract class BaseClient {
     }
 
     protected onDisconnect() {
+        if (this._isConnectionLogged) {
+            this._logger.info(
+                `Disconnected from hub ${this._hubName ?? "Unknown"} (MAC ${this._macAddress ?? "N/A"}).\r\n`,
+            );
+        }
         this._infoResponse = undefined;
         this._hubName = undefined;
+        this._macAddress = undefined;
+        this._isConnectionLogged = false;
         this._pendingMessagesPromises.clear();
 
         this.onClosed.fire();

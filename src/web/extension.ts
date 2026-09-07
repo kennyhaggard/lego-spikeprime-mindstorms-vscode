@@ -19,6 +19,7 @@ import {
 } from "../shared-extension";
 import {
     Command,
+    formatProgramLog,
     getImportedModuleNames,
     setTimeoutAsync,
 } from "../utils";
@@ -157,8 +158,15 @@ async function performUploadProgram(
         );
 
         if (compileResult?.status !== 0) {
-            logger?.error(compileResult.err.join("\r\n"));
-            logger?.error("\r\n");
+            logger?.error(formatProgramLog(
+                slotId,
+                `compilation failed for ${document.fileName}:\r\n`,
+            ));
+            logger?.error(
+                compileResult.err
+                    .map(error => formatProgramLog(slotId, error))
+                    .join("\r\n") + "\r\n",
+            );
             throw new Error("Compilation Failed!");
         }
     }
@@ -167,6 +175,7 @@ async function performUploadProgram(
     const auxiliaryFiles = await prepareAuxiliaryFiles(
         [...includeFiles, ...importedFiles],
         compileBeforeUpload,
+        slotId,
     );
     await clearProgramSlot(slotId);
     for (const auxiliaryFile of auxiliaryFiles) {
@@ -190,6 +199,7 @@ async function performUploadProgram(
 async function prepareAuxiliaryFiles(
     files: Array<{ name: string, data: Uint8Array }>,
     compileBeforeUpload: boolean,
+    slotId: number,
 ): Promise<Array<{ name: string, sourceName: string, data: Uint8Array }>> {
     const logger = getLogger();
     const preparedFiles: Array<{ name: string, sourceName: string, data: Uint8Array }> = [];
@@ -207,9 +217,15 @@ async function prepareAuxiliaryFiles(
             wasmUri.toString(),
         );
         if (compileResult.status !== 0 || !compileResult.mpy) {
-            logger?.error(`Compilation failed for ${file.name}:\r\n`);
-            logger?.error(compileResult.err.join("\r\n"));
-            logger?.error("\r\n");
+            logger?.error(formatProgramLog(
+                slotId,
+                `compilation failed for ${file.name}:\r\n`,
+            ));
+            logger?.error(
+                compileResult.err
+                    .map(error => formatProgramLog(slotId, error))
+                    .join("\r\n") + "\r\n",
+            );
             throw new Error(`Compilation failed for ${file.name}`);
         }
 

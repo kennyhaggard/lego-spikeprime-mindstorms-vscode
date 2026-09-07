@@ -5,6 +5,7 @@ import { Logger } from "./logger";
 import {
     Command,
     crc32WithAlignment,
+    formatProgramLog,
     hasLegoProgramHeader,
     parseLegoProgramHeader,
 } from "./utils";
@@ -306,6 +307,7 @@ export async function onHubConnected() {
         logger.error("Unable to read hub name: " + (e instanceof Error ? e.message : e));
     }
 
+    client?.logConnected();
     await updateHubStatusBarItem();
     showTerminal();
 }
@@ -346,7 +348,7 @@ export async function uploadFileToHub(
 ) {
     const uploadSize = data.length;
 
-    logger.info(`Uploading file ${displayFileName} to slot ${slotId}...`);
+    logger.info(formatProgramLog(slotId, `uploading ${displayFileName}...`));
     await client!.startFileUpload(fileName, slotId, crc32WithAlignment(data));
 
     const blockSize: number = client!.maxChunkSize!;
@@ -369,7 +371,7 @@ export async function startProgramInSlot(slotId: number, showProgress = true) {
         return;
     }
 
-    logger.info(`Starting program ${slotId}\r\n`);
+    logger.info(formatProgramLog(slotId, "starting program.\r\n"));
     const startProgram = () => client!.startStopProgram(slotId);
     showCurrentProgramProgress = showProgress;
     const success = showProgress

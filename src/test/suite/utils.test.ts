@@ -2,6 +2,7 @@ import * as assert from "assert";
 
 import {
     formatBluetoothAddress,
+    formatProgramLog,
     getImportedModuleNames,
     hasLegoProgramHeader,
     parseLegoProgramHeader,
@@ -13,6 +14,13 @@ suite("Utils Test Suite", () => {
         assert.strictEqual(
             formatBluetoothAddress("aabbccddeeff"),
             "AA:BB:CC:DD:EE:FF",
+        );
+    });
+
+    test("Formats program logs with a two-digit slot prefix", () => {
+        assert.strictEqual(
+            formatProgramLog(3, "starting program."),
+            "Slot 03: starting program.",
         );
     });
 

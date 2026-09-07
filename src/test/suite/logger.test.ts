@@ -8,17 +8,42 @@ import { Logger } from "../../logger";
 suite("Logger Test Suite", () => {
     test("Writes blue operation fragments on one terminal line", () => {
         const emitter = new vscode.EventEmitter<string>();
-        const logger = new Logger(emitter);
+        const logger = new Logger(
+            emitter,
+            () => new Date("2026-09-07T12:34:56.789Z"),
+        );
         const output: string[] = [];
         const subscription = emitter.event(text => output.push(text));
 
-        logger.info("Uploading file gadget.py to slot 0...");
+        logger.info("Slot 00: uploading gadget.py...");
         logger.info("done.\r\n");
 
         assert.strictEqual(
             output.join(""),
-            "\u001b[36mUploading file gadget.py to slot 0...\u001b[0m" +
+            "\u001b[36m[2026-09-07T12:34:56.789Z] Slot 00: uploading gadget.py...\u001b[0m" +
                 "\u001b[36mdone.\r\n\u001b[0m",
+        );
+
+        subscription.dispose();
+        emitter.dispose();
+    });
+
+    test("Timestamps each complete or fragmented log line once", () => {
+        const emitter = new vscode.EventEmitter<string>();
+        const logger = new Logger(
+            emitter,
+            () => new Date("2026-09-07T12:34:56.789Z"),
+        );
+        const output: string[] = [];
+        const subscription = emitter.event(text => output.push(text));
+
+        logger.log("first ");
+        logger.log("line\r\nsecond line\r\n");
+
+        assert.strictEqual(
+            output.join(""),
+            "[2026-09-07T12:34:56.789Z] first line\r\n" +
+                "[2026-09-07T12:34:56.789Z] second line\r\n",
         );
 
         subscription.dispose();

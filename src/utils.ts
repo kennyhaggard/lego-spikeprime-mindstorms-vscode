@@ -28,6 +28,10 @@ export function formatBluetoothAddress(address: string): string {
     return hexAddress.match(/.{2}/g)!.join(":").toUpperCase();
 }
 
+export function formatProgramLog(slotId: number, message: string): string {
+    return `Slot ${slotId.toString().padStart(2, "0")}: ${message}`;
+}
+
 export function hasLegoProgramHeader(firstLine: string): boolean {
     return firstLine.startsWith("# LEGO");
 }

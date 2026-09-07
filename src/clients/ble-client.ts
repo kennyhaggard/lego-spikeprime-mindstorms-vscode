@@ -84,11 +84,11 @@ export class BleClient extends BaseClient {
                     return;
                 }
 
+                let displayName = peripheral.advertisement.localName || "Unknown";
                 try {
                     const name = await this.probeHubName(peripheral, cancellationToken);
                     if (name) {
-                        item.label = `${name} (${address})`;
-                        publishItems();
+                        displayName = name;
                     }
                 }
                 catch (error) {
@@ -97,6 +97,15 @@ export class BleClient extends BaseClient {
                     }
                 }
                 finally {
+                    if (!cancellationToken.isCancellationRequested) {
+                        if (displayName !== "Unknown") {
+                            item.label = `${displayName} (${address})`;
+                            publishItems();
+                        }
+                        this._logger.info(
+                            `Found hub ${displayName} (MAC ${address}).\r\n`,
+                        );
+                    }
                     await startScanning();
                 }
             });
@@ -131,6 +140,11 @@ export class BleClient extends BaseClient {
     public async connect(peripheralUuid: string) {
         this._messageFrameDecoder.reset();
         this._peripheral = await noble.connectAsync(peripheralUuid);
+        this._macAddress = formatBluetoothAddress(
+            this._peripheral.address && this._peripheral.address !== "unknown"
+                ? this._peripheral.address
+                : this._peripheral.id,
+        );
         this._peripheral.on("disconnect", this._onPeripheralDisconnect);
 
         const { characteristics } = await this._peripheral.discoverSomeServicesAndCharacteristicsAsync(

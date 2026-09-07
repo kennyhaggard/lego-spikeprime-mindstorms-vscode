@@ -5,23 +5,27 @@ export class Logger {
     private rawLogContents = "";
     private rawLogFlush: ReturnType<typeof setTimeout> | undefined;
     private rawLogWrite = Promise.resolve();
+    private isAtLineStart = true;
 
-    constructor(private writeEvent: vscode.EventEmitter<string>) { }
+    constructor(
+        private writeEvent: vscode.EventEmitter<string>,
+        private now: () => Date = () => new Date(),
+    ) { }
 
     public get rawMessageLogLocation() {
         return this.rawLogUri?.toString(true);
     }
 
     public info(text: string) {
-        this.writeEvent.fire(`\u001b[36m${text}\u001b[0m`);
+        this.writeEvent.fire(`\u001b[36m${this.addTimestamps(text)}\u001b[0m`);
     }
 
     public error(text: string) {
-        this.writeEvent.fire(`\u001b[31m${text}\u001b[0m`);
+        this.writeEvent.fire(`\u001b[31m${this.addTimestamps(text)}\u001b[0m`);
     }
 
     public log(text: string) {
-        this.writeEvent.fire(text);
+        this.writeEvent.fire(this.addTimestamps(text));
     }
 
     public configureRawMessageLog(logUri: vscode.Uri) {
@@ -34,7 +38,7 @@ export class Logger {
         }
 
         this.rawLogContents += `${JSON.stringify({
-            timestamp: new Date().toISOString(),
+            timestamp: this.now().toISOString(),
             direction,
             transport,
             data: [...data].map(byte => byte.toString(16).padStart(2, "0")).join(""),
@@ -59,5 +63,22 @@ export class Logger {
             vscode.workspace.fs.writeFile(this.rawLogUri!, contents),
         );
         await this.rawLogWrite;
+    }
+
+    private addTimestamps(text: string): string {
+        let timestampedText = "";
+
+        for (const character of text) {
+            if (this.isAtLineStart && character !== "\r" && character !== "\n") {
+                timestampedText += `[${this.now().toISOString()}] `;
+                this.isAtLineStart = false;
+            }
+            timestampedText += character;
+            if (character === "\n") {
+                this.isAtLineStart = true;
+            }
+        }
+
+        return timestampedText;
     }
 }
