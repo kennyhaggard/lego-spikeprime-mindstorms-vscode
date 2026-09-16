@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import { BaseClient, HubQuickPickItem } from "./clients/base-client";
 import { BleClient } from "./clients/ble-client";
 import { UsbClient } from "./clients/usb-client";
+import { findFileInParentDirectories } from "./file-search";
 import { registerHubOS3Stubs } from "./pylance-stubs";
 import {
     clearProgramSlot,
@@ -671,17 +672,26 @@ function loadIncludeFiles(
     programPath: string,
     includeFileNames: string[],
 ): Array<{ name: string, path: string, data: Uint8Array }> {
+    const programDirectory = path.dirname(programPath);
+    const projectDirectory = vscode.workspace
+        .getWorkspaceFolder(vscode.Uri.file(programPath))?.uri.fsPath
+        ?? programDirectory;
+
     return includeFileNames.map((name) => {
         if (path.basename(name) !== name || name === "." || name === "..") {
-            throw new Error(`Included file must be in the same directory: ${name}`);
+            throw new Error(`Included file must be a file name: ${name}`);
         }
         if (new TextEncoder().encode(name).length > 31) {
             throw new Error(`Included file name is too long: ${name}`);
         }
 
-        const includePath = path.resolve(path.dirname(programPath), name);
-        if (!fs.existsSync(includePath) || !fs.statSync(includePath).isFile()) {
-            throw new Error(`Included file not found: ${includePath}`);
+        const includePath = findFileInParentDirectories(
+            name,
+            programDirectory,
+            projectDirectory,
+        );
+        if (!includePath) {
+            throw new Error(`Included file not found: ${name}`);
         }
 
         return { name, path: includePath, data: fs.readFileSync(includePath) };
@@ -692,7 +702,9 @@ function loadImportedFiles(
     programPath: string,
     includeFiles: Array<{ name: string, path: string, data: Uint8Array }>,
 ): Array<{ name: string, path: string, data: Uint8Array }> {
-    const programDirectory = path.dirname(programPath);
+    const projectDirectory = vscode.workspace
+        .getWorkspaceFolder(vscode.Uri.file(programPath))?.uri.fsPath
+        ?? path.dirname(programPath);
     const knownPaths = new Set([
         path.resolve(programPath),
         ...includeFiles.map(file => path.resolve(file.path)),
@@ -710,10 +722,12 @@ function loadImportedFiles(
         const source = fs.readFileSync(currentPath, "utf-8");
         for (const moduleName of getImportedModuleNames(source)) {
             const name = `${moduleName}.py`;
-            const importedPath = path.resolve(programDirectory, name);
-            if (knownPaths.has(importedPath)
-                || !fs.existsSync(importedPath)
-                || !fs.statSync(importedPath).isFile()) {
+            const importedPath = findFileInParentDirectories(
+                name,
+                path.dirname(currentPath),
+                projectDirectory,
+            );
+            if (!importedPath || knownPaths.has(importedPath)) {
                 continue;
             }
             if (new TextEncoder().encode(name).length > 31) {

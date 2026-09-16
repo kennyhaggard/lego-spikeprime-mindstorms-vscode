@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Find included files and imported Python modules in parent directories up to the project root.
 - Timestamp LEGO Hub terminal lines and log the start and successful completion of Upload All operations.
 - Log hub discovery, connection, and disconnection with the hub name and Bluetooth MAC address.
 - Add an Upload All action to the Python editor title bar.

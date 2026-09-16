@@ -60,7 +60,7 @@ The **LEGO Hub: Start Program** command runs code that is already stored in the 
 
 ### Local modules
 
-Python files referenced by `import` and `from ... import ...` statements are automatically uploaded when a matching `.py` file exists in the program's directory. Local modules are uploaded as separate files and are scanned recursively for their own local imports. Missing modules are left for HubOS to resolve.
+Python files referenced by `import` and `from ... import ...` statements are automatically uploaded when a matching `.py` file exists beside the importing file or in one of its parent directories up to the project root. The nearest match is used. Local modules are uploaded as separate files and are scanned recursively for their own local imports. Missing modules are left for HubOS to resolve.
 
 When `compileBeforeUpload` is enabled, automatically discovered and explicitly included `.py` files are compiled and uploaded as `.mpy` modules. Other explicitly included file types are uploaded unchanged.
 
@@ -105,7 +105,7 @@ For example, this uploads the current file to slot 5 and starts it after the upl
 # LEGO slot:5 autostart
 ```
 
-Use `include:` to copy files from the program's directory into the same hub slot as separate modules:
+Use `include:` to copy files from the program's directory or one of its parent directories up to the project root into the same hub slot as separate modules:
 
 ```python
 # LEGO include:gadget.py,helpers.py slot:5 autostart

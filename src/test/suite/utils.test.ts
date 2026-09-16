@@ -1,5 +1,9 @@
 import * as assert from "assert";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 
+import { findFileInParentDirectories } from "../../file-search";
 import {
     formatBluetoothAddress,
     formatProgramLog,
@@ -22,6 +26,34 @@ suite("Utils Test Suite", () => {
             formatProgramLog(3, "starting program."),
             "Slot 03: starting program.",
         );
+    });
+
+    test("Finds the nearest file while searching toward the project root", () => {
+        const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "lego-includes-"));
+        const projectDirectory = path.join(outsideDirectory, "project");
+        const programDirectory = path.join(projectDirectory, "src", "missions");
+        fs.mkdirSync(programDirectory, { recursive: true });
+        fs.writeFileSync(path.join(outsideDirectory, "outside.py"), "");
+        fs.writeFileSync(path.join(projectDirectory, "gadget.py"), "");
+        fs.writeFileSync(path.join(projectDirectory, "src", "nearest.py"), "");
+
+        try {
+            assert.strictEqual(
+                findFileInParentDirectories("gadget.py", programDirectory, projectDirectory),
+                path.join(projectDirectory, "gadget.py"),
+            );
+            assert.strictEqual(
+                findFileInParentDirectories("nearest.py", programDirectory, projectDirectory),
+                path.join(projectDirectory, "src", "nearest.py"),
+            );
+            assert.strictEqual(
+                findFileInParentDirectories("outside.py", programDirectory, projectDirectory),
+                undefined,
+            );
+        }
+        finally {
+            fs.rmSync(outsideDirectory, { recursive: true, force: true });
+        }
     });
 
     test("Normalizes an already separated Bluetooth address", () => {

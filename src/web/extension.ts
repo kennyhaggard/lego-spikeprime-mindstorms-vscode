@@ -107,6 +107,30 @@ export async function deactivate() {
     await onDeactivate();
 }
 
+async function findIncludedFile(
+    fileName: string,
+    documentUri: vscode.Uri,
+): Promise<vscode.Uri | undefined> {
+    const programDirectory = vscode.Uri.joinPath(documentUri, "..");
+    const projectDirectory = vscode.workspace.getWorkspaceFolder(documentUri)?.uri
+        ?? programDirectory;
+    let currentDirectory = programDirectory;
+
+    while (true) {
+        const candidateUri = vscode.Uri.joinPath(currentDirectory, fileName);
+        try {
+            await vscode.workspace.fs.readFile(candidateUri);
+            return candidateUri;
+        }
+        catch {
+            if (currentDirectory.toString() === projectDirectory.toString()) {
+                return undefined;
+            }
+            currentDirectory = vscode.Uri.joinPath(currentDirectory, "..");
+        }
+    }
+}
+
 async function performUploadProgram(
     slotId: number,
     includeFileNames: string[],
@@ -128,19 +152,17 @@ async function performUploadProgram(
     ) ?? false;
     const includeFiles = await Promise.all(includeFileNames.map(async (name) => {
         if (name.includes("/") || name.includes("\\") || name === "." || name === "..") {
-            throw new Error(`Included file must be in the same directory: ${name}`);
+            throw new Error(`Included file must be a file name: ${name}`);
         }
         if (new TextEncoder().encode(name).length > 31) {
             throw new Error(`Included file name is too long: ${name}`);
         }
 
-        const uri = vscode.Uri.joinPath(document.uri, "..", name);
-        try {
-            return { name, data: await vscode.workspace.fs.readFile(uri) };
+        const uri = await findIncludedFile(name, document.uri);
+        if (!uri) {
+            throw new Error(`Included file not found: ${name}`);
         }
-        catch {
-            throw new Error(`Included file not found: ${uri.toString()}`);
-        }
+        return { name, uri, data: await vscode.workspace.fs.readFile(uri) };
     }));
     const importedFiles = await loadImportedFiles(
         document.uri,
@@ -242,22 +264,25 @@ async function prepareAuxiliaryFiles(
 async function loadImportedFiles(
     programUri: vscode.Uri,
     programSource: string,
-    includeFiles: Array<{ name: string, data: Uint8Array }>,
+    includeFiles: Array<{ name: string, uri: vscode.Uri, data: Uint8Array }>,
 ): Promise<Array<{ name: string, data: Uint8Array }>> {
     const knownNames = new Set([
         programUri.path.split("/").pop() ?? programUri.path,
         ...includeFiles.map(file => file.name),
     ]);
-    const pendingSources = [
-        programSource,
+    const pendingSources: Array<{ uri: vscode.Uri, source: string }> = [
+        { uri: programUri, source: programSource },
         ...includeFiles
             .filter(file => file.name.toLowerCase().endsWith(".py"))
-            .map(file => new TextDecoder().decode(file.data)),
+            .map(file => ({
+                uri: file.uri,
+                source: new TextDecoder().decode(file.data),
+            })),
     ];
     const importedFiles: Array<{ name: string, data: Uint8Array }> = [];
 
     while (pendingSources.length > 0) {
-        const source = pendingSources.shift()!;
+        const { uri: sourceUri, source } = pendingSources.shift()!;
         for (const moduleName of getImportedModuleNames(source)) {
             const name = `${moduleName}.py`;
             if (knownNames.has(name)) {
@@ -267,18 +292,15 @@ async function loadImportedFiles(
                 throw new Error(`Imported file name is too long: ${name}`);
             }
 
-            const uri = vscode.Uri.joinPath(programUri, "..", name);
-            let data: Uint8Array;
-            try {
-                data = await vscode.workspace.fs.readFile(uri);
-            }
-            catch {
+            const uri = await findIncludedFile(name, sourceUri);
+            if (!uri) {
                 continue;
             }
+            const data = await vscode.workspace.fs.readFile(uri);
 
             knownNames.add(name);
             importedFiles.push({ name, data });
-            pendingSources.push(new TextDecoder().decode(data));
+            pendingSources.push({ uri, source: new TextDecoder().decode(data) });
         }
     }
 
